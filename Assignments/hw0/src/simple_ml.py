@@ -82,9 +82,33 @@ def softmax_loss(Z, y):
     Returns:
         Average softmax loss over the sample.
     """
-    ### BEGIN YOUR CODE
-    pass
-    ### END YOUR CODE
+    # 装逼用一行流
+    return -np.mean(    # 平均值    
+        np.log(         # 对数
+            np.exp(     # 指数
+                (Z-np.max(Z,axis=1,keepdims=True))[np.arange(Z.shape[0]),y]      # 取最大值后再取对应标签的logit
+                )/np.sum(    # 求和
+                    np.exp(Z-np.max(Z,axis=1,keepdims=True)),axis=1,keepdims=True
+                    )    # 求softmax
+                )
+            )
+
+    # # 数值稳定性：减去每行的最大值
+    # max_Z = np.max(Z, axis=1, keepdims=True)
+    # exp_Z = np.exp(Z - max_Z)  # 形状: (batch_size, num_classes)
+    
+    # # 计算softmax分母
+    # sum_exp_Z = np.sum(exp_Z, axis=1, keepdims=True)  # 形状: (batch_size, 1)
+    
+    # # 获取每个样本真实类别的概率
+    # n = Z.shape[0]
+    # true_class_probs = exp_Z[np.arange(n), y]  # 形状: (batch_size,)
+    
+    # # 计算log softmax概率 for true class
+    # log_probs = np.log(true_class_probs / sum_exp_Z.flatten())  # 除法后形状匹配
+    
+    # # 返回平均损失
+    # return -np.mean(log_probs)
 
 
 def softmax_regression_epoch(X, y, theta, lr = 0.1, batch=100):
