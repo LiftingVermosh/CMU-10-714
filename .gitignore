@@ -1,0 +1,12 @@
+*.*
+/.vscode
+/.pytest_cache
+/__pycache__
+
+!.gitignore
+!./Assignment/**
+!./tests/**
+!hw0.ipynb
+!Makefile
+!README.md
+!./Notes/**
