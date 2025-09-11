@@ -1,8 +1,11 @@
 *.*
-/.vscode
+.vscode
+/.vscode/**
 /.pytest_cache
+/.pytest_cache/**
 /__pycache__
-
+/__pycache__/**
+*.json
 !.gitignore
 !./Assignment/**
 !./tests/**
