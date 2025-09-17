@@ -6,10 +6,14 @@
 /__pycache__
 /__pycache__/**
 *.json
+!*.py
+!*.ipynb
 !.gitignore
 !./Assignment/**
-!./tests/**
-!hw0.ipynb
+!./Assignment/hw0/**
+!./Assignment/hw1/**
+!./Assignment/hw2/**
+!./Assignment/hw3/**
 !Makefile
 !README.md
 !./Notes/**

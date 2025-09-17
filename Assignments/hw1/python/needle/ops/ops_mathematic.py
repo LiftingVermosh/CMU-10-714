@@ -365,3 +365,81 @@ class ReLU(TensorOp):
 def relu(a):
     return ReLU()(a)
 
+# class Max(TensorOp):
+#     def __init__(self, axis=None, keepdims=False):
+#         self.axis = axis
+#         self.keepdims = keepdims
+
+#     def compute(self, a):
+#         return array_api.max(a, axis=self.axis, keepdims=self.keepdims)
+
+#     def gradient(self, out_grad: Tensor, node: Tensor):
+#         a = node.inputs[0]
+#         max_val = node.cached_data  # 使用前向计算缓存的最大值
+        
+#         # 如果 keepdims 为 False，需要扩展维度以匹配输入形状
+#         if self.axis is not None and not self.keepdims:
+#             # 扩展维度
+#             max_val = array_api.expand_dims(max_val, axis=self.axis)
+        
+#         # 创建掩码：指示哪些元素是最大值
+#         a_data = a.realize_cached_data()
+#         mask = (a_data == max_val)
+        
+#         # 处理多个最大值的情况：梯度平均分配
+#         mask_sum = array_api.sum(mask, axis=self.axis, keepdims=True)
+#         mask = mask / mask_sum
+        
+#         # 广播输出梯度到输入形状
+#         out_grad_data = out_grad.realize_cached_data()
+#         if out_grad_data.shape != a_data.shape:
+#             out_grad_data = array_api.broadcast_to(out_grad_data, a_data.shape)
+        
+#         # 计算梯度
+#         grad = out_grad_data * mask
+#         return (Tensor(grad),)
+
+# def max(a, axis=None, keepdims=False):
+#     return Max(axis, keepdims)(a)
+
+
+# class Mean(TensorOp):
+#     def __init__(self, axis=None, keepdims=False):
+#         self.axis = axis
+#         self.keepdims = keepdims
+
+#     def compute(self, a):
+#         return array_api.mean(a, axis=self.axis, keepdims=self.keepdims)
+
+#     def gradient(self, out_grad, node):
+#         a = node.inputs[0]
+#         input_shape = a.shape
+        
+#         # 计算参与平均的元素数量
+#         if self.axis is None:
+#             count = array_api.size(a.realize_cached_data())
+#         else:
+#             if isinstance(self.axis, int):
+#                 axis = (self.axis,)
+#             else:
+#                 axis = self.axis
+#             count = 1
+#             for ax in axis:
+#                 count *= input_shape[ax]
+        
+#         # 广播输出梯度到输入形状
+#         grad = out_grad
+#         if not self.keepdims and self.axis is not None:
+#             if isinstance(self.axis, int):
+#                 axis = (self.axis,)
+#             else:
+#                 axis = self.axis
+#             for ax in sorted(axis):
+#                 grad = reshape(grad, grad.shape[:ax] + (1,) + grad.shape[ax:])
+#         grad = broadcast_to(grad, input_shape)
+
+#         grad = grad / count
+#         return (grad,)
+
+# def mean(a, axis=None, keepdims=False):
+#     return Mean(axis, keepdims)(a)

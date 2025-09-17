@@ -1,7 +1,7 @@
 """Core data structures."""
 import needle
 from .backend_numpy import Device, cpu, all_devices
-from typing import List, Optional, NamedTuple, Tuple, Union
+from typing import List, Optional, NamedTuple, Tuple, Union, Dict
 from collections import namedtuple
 import numpy
 
@@ -25,7 +25,8 @@ class Op:
         raise NotImplementedError()
 
     def compute(self, *args: Tuple[NDArray]):
-        """计算运算符的前向传递。
+        """
+        计算运算符的前向传递。
 
         参数
         ----------
@@ -43,7 +44,8 @@ class Op:
     def gradient(
         self, out_grad: "Value", node: "Value"
     ) -> Union["Value", Tuple["Value"]]:
-        """为给定的输出旁点计算每个输入值的部分旁点。
+        """
+        为给定的输出旁点计算每个输入值的部分旁点。
 
         参数
         ----------
@@ -369,6 +371,13 @@ class Tensor(Value):
 
     def transpose(self, axes=None):
         return needle.ops.Transpose(axes)(self)
+    
+    # def max(self, axis=None, keepdims=False):
+    #     return needle.ops.Max(axis, keepdims)(self)
+    
+    # def mean(self, axis=None, keepdims=False):
+    #     return needle.ops.Mean(axis, keepdims)(self)
+
 
     __radd__ = __add__
     __rmul__ = __mul__
@@ -377,43 +386,77 @@ class Tensor(Value):
 
 
 def compute_gradient_of_variables(output_tensor, out_grad):
-    """Take gradient of output node with respect to each node in node_list.
-
-    Store the computed result in the grad field of each Variable.
     """
-    # a map from node to a list of gradient contributions from each output node
+    计算输出节点相对于节点列表中每个节点的梯度。
+    将计算结果存储在每个变量的 grad 字段中。
+    """
+    # 映射表：节点 -> 从输出节点收到的梯度贡献列表
     node_to_output_grads_list: Dict[Tensor, List[Tensor]] = {}
-    # Special note on initializing gradient of
-    # We are really taking a derivative of the scalar reduce_sum(output_node)
-    # instead of the vector output_node. But this is the common case for loss function.
     node_to_output_grads_list[output_tensor] = [out_grad]
 
-    # Traverse graph in reverse topological order given the output_node that we are taking gradient wrt.
+    # 获取逆拓扑排序
     reverse_topo_order = list(reversed(find_topo_sort([output_tensor])))
 
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+    for node in reverse_topo_order:
+        # 获取当前节点的梯度贡献列表
+        current_grads = node_to_output_grads_list.get(node, [])
+        if not current_grads:
+            # 如果没有梯度贡献，设置为零梯度
+            node.grad = init.zeros_like(node)
+            continue
+        
+        # 计算当前节点的总梯度
+        node_grad = sum_node_list(current_grads)
+        node.grad = node_grad  # 存储当前节点的梯度
+
+        # 如果是叶子节点（无操作），不需要继续传播
+        if node.op is None:
+            continue
+
+        # 计算当前节点对输入节点的梯度
+        input_grads = node.op.gradient_as_tuple(node_grad, node)
+
+        # 将梯度传播到输入节点
+        for i, input_node in enumerate(node.inputs):
+            if input_node not in node_to_output_grads_list:
+                node_to_output_grads_list[input_node] = []
+            node_to_output_grads_list[input_node].append(input_grads[i])
+
+    return node_to_output_grads_list
+
 
 
 def find_topo_sort(node_list: List[Value]) -> List[Value]:
-    """Given a list of nodes, return a topological sort list of nodes ending in them.
-
-    A simple algorithm is to do a post-order DFS traversal on the given nodes,
-    going backwards based on input edges. Since a node is added to the ordering
-    after all its predecessors are traversed due to post-order DFS, we get a topological
-    sort.
     """
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+    给定节点列表，返回以这些节点结尾的拓扑排序列表。
+
+    简单的算法是对给定的节点进行后序 DFS 遍历、
+    根据输入的边倒序遍历。由于一个节点是在其所有前节点被遍历后才被添加到排序中的
+    后，我们会得到一个拓扑排序。
+    排序。
+    """
+    # topo_sort_dfs 所用参数
+    visited = set()
+    topo_order = []
+    # 遍历所有节点
+    for node in node_list:
+        topo_sort_dfs(node, visited, topo_order)
+    return topo_order
 
 
 def topo_sort_dfs(node, visited, topo_order):
     """Post-order DFS"""
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+    # 判断有没有访问过这个节点
+    if node in visited:
+        return
+    visited.add(node)
+
+    # 遍历所有输出节点
+    for input_node in node.inputs:
+        topo_sort_dfs(input_node, visited, topo_order)
+
+    # 添加节点到拓扑排序
+    topo_order.append(node)
 
 
 ##############################
@@ -422,7 +465,7 @@ def topo_sort_dfs(node, visited, topo_order):
 
 
 def sum_node_list(node_list):
-    """Custom sum function in order to avoid create redundant nodes in Python sum implementation."""
+    """自定义求和函数，以避免在 Python 求和实现中创建冗余节点。"""
     from operator import add
     from functools import reduce
 
