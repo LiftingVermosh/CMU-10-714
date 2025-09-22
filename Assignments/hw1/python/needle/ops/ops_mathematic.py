@@ -244,35 +244,38 @@ def broadcast_to(a, shape):
 
 
 class Summation(TensorOp):
-    def __init__(self, axes: Optional[tuple] = None):
+    def __init__(self, axes: Optional[tuple] = None, keepdims: bool = False):
         self.axes = axes
-
+        self.keepdims = keepdims # 添加 keepdims 属性
     def compute(self, a):
-        return array_api.sum(a, axis=self.axes)
-
+        # 将 keepdims 参数传递给 numpy.sum
+        return array_api.sum(a, axis=self.axes, keepdims=self.keepdims)
     def gradient(self, out_grad, node):
         """
-        对于summation(a)，a的梯度是out_grad
+        此处对原代码做出了一些修改，主要是为了处理 keepdims=False 的情况。
+        对于 summation(a, axes=None, keepdims=False)，a的梯度是reshape(out_grad, a.shape)
+        对于 summation(a, axes=None, keepdims=True)，a的梯度是broadcast_to(out_grad, a.shape)
         """
         input_shape = node.inputs[0].shape
-        if self.axes is None:
-            axes = range(len(input_shape))
-        elif isinstance(self.axes, int):
-            axes = (self.axes,)
+        
+        if not self.keepdims:
+            if self.axes is None:
+                axes = range(len(input_shape))
+            elif isinstance(self.axes, int):
+                axes = (self.axes,)
+            else:
+                axes = self.axes
+            
+            grad_shape = list(out_grad.shape)
+            for ax in sorted(axes):
+                grad_shape.insert(ax, 1)
+            grad = reshape(out_grad, tuple(grad_shape))
         else:
-            axes = self.axes
-        # 添加维度
-        grad = out_grad
-        grad_shape = list(grad.shape)
-        for ax in sorted(axes):
-            grad_shape.insert(ax, 1)
-        grad = reshape(grad, tuple(grad_shape))
-        grad = broadcast_to(grad, input_shape)
-        return (grad,)
-
-
-def summation(a, axes=None):
-    return Summation(axes)(a)
+            grad = out_grad
+        return (broadcast_to(grad, input_shape),)
+    
+def summation(a, axes=None, keepdims=False): # 添加 keepdims 参数
+    return Summation(axes=axes, keepdims=keepdims)(a) # 传递 keepdims
 
 
 class MatMul(TensorOp):
@@ -358,88 +361,109 @@ class ReLU(TensorOp):
         注意:
         - 考虑输入张量中存在负数的情况，返回 (0,)
         """
-        x = node.inputs[0]
-        return (out_grad * (x > 0),) if x.shape != () else (out_grad,)
+        # 反向传播：梯度为1 where input > 0, 0 otherwise
+        input_data = node.inputs[0].realize_cached_data()
+        mask = (input_data > 0).astype(array_api.float32)
+        mask = Tensor(mask)
+        return (out_grad * mask,)
 
 
 def relu(a):
     return ReLU()(a)
 
-# class Max(TensorOp):
-#     def __init__(self, axis=None, keepdims=False):
-#         self.axis = axis
-#         self.keepdims = keepdims
+class EWiseEqual(TensorOp):
+    def compute(self, a: NDArray, b: NDArray):
+        # 返回 float32 的 0. 或 1. 标志，方便后续梯度运算
+        return array_api.equal(a, b).astype(array_api.float32)
 
-#     def compute(self, a):
-#         return array_api.max(a, axis=self.axis, keepdims=self.keepdims)
+    def gradient(self, out_grad, node):
+        # equal 操作不可导，梯度恒为 0
+        return (out_grad * 0, out_grad * 0)
 
-#     def gradient(self, out_grad: Tensor, node: Tensor):
-#         a = node.inputs[0]
-#         max_val = node.cached_data  # 使用前向计算缓存的最大值
+def equal(a, b):
+    return EWiseEqual()(a, b)
+
+
+class Max(TensorOp):
+    def __init__(self, axes: Optional[tuple] = None, keepdims=False):
+        self.axes = axes
+        self.keepdims = keepdims
+    def compute(self, a):
+        return array_api.max(a, axis=self.axes, keepdims=self.keepdims)
+    def gradient(self, out_grad, node):
+        """
+        最大值的梯度计算，注意需要使用 needle 的 Op 来构建计算图。
+        """
+        a = node.inputs[0]
+        # 直接使用前向计算得到的 Tensor 结果 (node 本身)
+        # 注意 node.realize_cached_data() 才是 NDArray, node 是 Value/Tensor
+        max_val = node 
         
-#         # 如果 keepdims 为 False，需要扩展维度以匹配输入形状
-#         if self.axis is not None and not self.keepdims:
-#             # 扩展维度
-#             max_val = array_api.expand_dims(max_val, axis=self.axis)
+        # 恢复维度和形状
+        # 如果 keepdims=False, 需要恢复被压缩的维度
+        if not self.keepdims and self.axes is not None:
+            out_shape = list(a.shape)
+            if isinstance(self.axes, int): axes = (self.axes,)
+            else: axes = self.axes
+            
+            for ax in axes:
+                out_shape[ax] = 1
+            max_val = reshape(max_val, out_shape)
         
-#         # 创建掩码：指示哪些元素是最大值
-#         a_data = a.realize_cached_data()
-#         mask = (a_data == max_val)
+        # 将最大值广播到原始输入的形状
+        max_val_broadcasted = broadcast_to(max_val, a.shape)
         
-#         # 处理多个最大值的情况：梯度平均分配
-#         mask_sum = array_api.sum(mask, axis=self.axis, keepdims=True)
-#         mask = mask / mask_sum
+        # 创建掩码
+        mask = (a == max_val_broadcasted)
         
-#         # 广播输出梯度到输入形状
-#         out_grad_data = out_grad.realize_cached_data()
-#         if out_grad_data.shape != a_data.shape:
-#             out_grad_data = array_api.broadcast_to(out_grad_data, a_data.shape)
+        # 处理多个最大值的情况
+        # 使用 summation 和 broadcast_to 来计算每个区域最大值的数量
+        div_factor = summation(mask, axes=self.axes, keepdims=True)
+        mask = mask / broadcast_to(div_factor, a.shape)
         
-#         # 计算梯度
-#         grad = out_grad_data * mask
-#         return (Tensor(grad),)
+        # 应用链式法则 (反向传播梯度)
+        # 如果 keepdims=False, out_grad 也需要恢复维度并广播
+        if not self.keepdims and self.axes is not None:
+             # out_grad 的 shape 就是 max_val 在 keepdims=False 时的 shape, 
+             # 所以可以用上面相同的逻辑恢复
+            out_shape = list(a.shape)
+            if isinstance(self.axes, int): axes = (self.axes,)
+            else: axes = self.axes
+            for ax in axes:
+                out_shape[ax] = 1
+            out_grad = reshape(out_grad, out_shape)
+        return broadcast_to(out_grad, a.shape) * mask
+def max(a, axes=None, keepdims=False):
+    return Max(axes, keepdims)(a)
 
-# def max(a, axis=None, keepdims=False):
-#     return Max(axis, keepdims)(a)
 
-
-# class Mean(TensorOp):
-#     def __init__(self, axis=None, keepdims=False):
-#         self.axis = axis
-#         self.keepdims = keepdims
-
-#     def compute(self, a):
-#         return array_api.mean(a, axis=self.axis, keepdims=self.keepdims)
-
-#     def gradient(self, out_grad, node):
-#         a = node.inputs[0]
-#         input_shape = a.shape
+class Mean(TensorOp):
+    def __init__(self, axes: Optional[tuple] = None, keepdims=False):
+        self.axes = axes
+        self.keepdims = keepdims
+    def compute(self, a):
+        return array_api.mean(a, axis=self.axes, keepdims=self.keepdims)
+    def gradient(self, out_grad, node):
+        """
+        平均值的梯度计算，同样需要在计算图内。
+        """
+        a = node.inputs[0]
+        input_shape = a.shape
         
-#         # 计算参与平均的元素数量
-#         if self.axis is None:
-#             count = array_api.size(a.realize_cached_data())
-#         else:
-#             if isinstance(self.axis, int):
-#                 axis = (self.axis,)
-#             else:
-#                 axis = self.axis
-#             count = 1
-#             for ax in axis:
-#                 count *= input_shape[ax]
-        
-#         # 广播输出梯度到输入形状
-#         grad = out_grad
-#         if not self.keepdims and self.axis is not None:
-#             if isinstance(self.axis, int):
-#                 axis = (self.axis,)
-#             else:
-#                 axis = self.axis
-#             for ax in sorted(axis):
-#                 grad = reshape(grad, grad.shape[:ax] + (1,) + grad.shape[ax:])
-#         grad = broadcast_to(grad, input_shape)
-
-#         grad = grad / count
-#         return (grad,)
-
-# def mean(a, axis=None, keepdims=False):
-#     return Mean(axis, keepdims)(a)
+        # 计算参与平均的元素数量
+        if self.axes is None:
+            count = 1
+            for dim in input_shape:
+                count *= dim
+        else:
+            count = 1
+            axes = self.axes if isinstance(self.axes, tuple) else (self.axes,)
+            for ax in axes:
+                count *= input_shape[ax]
+        # 如果 keepdims=False，恢复维度并广播
+        # 不需要手动 reshape, broadcast_to 内部会处理
+        grad = broadcast_to(out_grad, input_shape)
+        # 梯度均匀分配，使用 DivScalar Op
+        return grad / count
+def mean(a, axes=None, keepdims=False):
+    return Mean(axes, keepdims)(a)

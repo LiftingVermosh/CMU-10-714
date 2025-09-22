@@ -108,6 +108,13 @@ class Value:
     cached_data: NDArray
     requires_grad: bool
 
+    def __hash__(self):
+        """使所有计算图的节点可哈希，基于对象标识。"""
+        return id(self)
+    
+    def __eq__(self, other):
+        return self is other
+
     def realize_cached_data(self):
         """
         Run compute to realize the cached data
@@ -357,8 +364,8 @@ class Tensor(Value):
     def matmul(self, other):
         return needle.ops.MatMul()(self, other)
 
-    def sum(self, axes=None):
-        return needle.ops.Summation(axes)(self)
+    def sum(self, axes=None, keepdims=False):
+        return needle.ops.Summation(axes, keepdims)(self)
 
     def broadcast_to(self, shape):
         return needle.ops.BroadcastTo(shape)(self)
@@ -372,12 +379,21 @@ class Tensor(Value):
     def transpose(self, axes=None):
         return needle.ops.Transpose(axes)(self)
     
-    # def max(self, axis=None, keepdims=False):
-    #     return needle.ops.Max(axis, keepdims)(self)
-    
-    # def mean(self, axis=None, keepdims=False):
-    #     return needle.ops.Mean(axis, keepdims)(self)
+    def __hash__(self):
+        return super().__hash__()
 
+    def __eq__(self, other):
+        if isinstance(other, Tensor):
+            return needle.ops.equal(self, other)
+        else:
+            # 把标量也转换为 Tensor 再比较
+            return needle.ops.equal(self, Tensor(array_api.array(other)))
+
+    def max(self, axes=None, keepdims=False):
+        return needle.ops.max(self, axes=axes, keepdims=keepdims)
+    
+    def mean(self, axes=None, keepdims=False):
+        return needle.ops.mean(self, axes=axes, keepdims=keepdims)
 
     __radd__ = __add__
     __rmul__ = __mul__
