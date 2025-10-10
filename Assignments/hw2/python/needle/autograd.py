@@ -382,18 +382,47 @@ class Tensor(Value):
     def __hash__(self):
         return super().__hash__()
 
-    def __eq__(self, other):
-        if isinstance(other, Tensor):
-            return needle.ops.equal(self, other)
-        else:
-            # 把标量也转换为 Tensor 再比较
-            return needle.ops.equal(self, Tensor(array_api.array(other)))
-
     def max(self, axes=None, keepdims=False):
         return needle.ops.max(self, axes=axes, keepdims=keepdims)
     
     def mean(self, axes=None, keepdims=False):
         return needle.ops.mean(self, axes=axes, keepdims=keepdims)
+
+    def __eq__(self, other):
+        """ a == b """
+        if isinstance(other, (int, float)):
+            other = Tensor(other, device=self.device, dtype=self.dtype)
+        return needle.ops.equal(self, other)
+
+    def __gt__(self, other):
+        """ a > b """
+        if isinstance(other, (int, float)):
+            other = Tensor(other, device=self.device, dtype=self.dtype)
+        return needle.ops.greater_than(self, other)
+    
+    def __lt__(self, other):
+        """ a < b """
+        if isinstance(other, (int, float)):
+            other = Tensor(other, device=self.device, dtype=self.dtype)
+        return needle.ops.greater_than(other, self)
+    
+    def __ge__(self, other):
+        """ a >= b """
+        if isinstance(other, (int, float)):
+            other = Tensor(other, device=self.device, dtype=self.dtype)
+        return needle.ops.greater_than(self, other) or needle.ops.equal(self, other)
+    
+    def __le__(self, other):
+        """ a <= b """
+        if isinstance(other, (int, float)):
+            other = Tensor(other, device=self.device, dtype=self.dtype)
+        return needle.ops.greater_than(other, self) or needle.ops.equal(self, other)
+    
+    def __ne__(self, other):
+        """ a != b """
+        if isinstance(other, (int, float)):
+            other = Tensor(other, device=self.device, dtype=self.dtype)
+        return not needle.ops.equal(self, other)
 
     __radd__ = __add__
     __rmul__ = __mul__

@@ -80,33 +80,40 @@ class Identity(Module):
 
 
 class Linear(Module):
+    """ 线性层 """
     def __init__(self, in_features: int, out_features: int, bias: bool = True, device: Any | None = None, dtype: str = "float32") -> None:
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        # 权重
+        self.weight = Parameter(init.kaiming_uniform(in_features, out_features, device=device, dtype=dtype, requires_grad=True))
+        # 偏置
+        if bias:
+            fan_in_bias = out_features
+            
+            bias_tensor = init.kaiming_uniform(fan_in_bias, 1, device=device, dtype=dtype, requires_grad=True)
+            
+            bias_tensor_reshaped = bias_tensor.reshape((1, out_features))
+            
+            self.bias = Parameter(bias_tensor_reshaped)
+        else:
+            self.bias = None
 
     def forward(self, X: Tensor) -> Tensor:
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        # 前向传播，线性层的前向传播为其权重与输入的乘积 + 偏置
+        out = X @ self.weight
+        if self.bias is not None:
+            out += self.bias
+        return out
 
 
 class Flatten(Module):
     def forward(self, X: Tensor) -> Tensor:
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
-
+        return X.reshape([X.shape[0], -1])
 
 class ReLU(Module):
     def forward(self, x: Tensor) -> Tensor:
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        return ops.ReLU()(x)
 
 class Sequential(Module):
     def __init__(self, *modules: Module) -> None:
@@ -114,16 +121,23 @@ class Sequential(Module):
         self.modules = modules
 
     def forward(self, x: Tensor) -> Tensor:
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        # 顺序遍历调用 forward 方法即可
+        for module in self.modules:
+            x = module.forward(x)
+        return x
 
 
+
+# nn_basic.py -> class SoftmaxLoss (修正后)
 class SoftmaxLoss(Module):
     def forward(self, logits: Tensor, y: Tensor) -> Tensor:
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        y_one_hot = init.one_hot(logits.shape[1], y, device=logits.device, dtype=logits.dtype)
+        lse = ops.logsumexp(logits, axes=(1,), keepdims=True) 
+        z_minus_lse = logits - lse.broadcast_to(logits.shape)
+        selected_log_probs = z_minus_lse * y_one_hot
+        total_loss = -ops.summation(selected_log_probs)
+        return total_loss / logits.shape[0]
+
 
 
 class BatchNorm1d(Module):
@@ -132,30 +146,124 @@ class BatchNorm1d(Module):
         self.dim = dim
         self.eps = eps
         self.momentum = momentum
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        self.weight = Parameter(init.ones(1, dim, device=device, dtype=dtype), requires_grad=True)
+        self.bias = Parameter(init.zeros(1, dim, device=device, dtype=dtype), requires_grad=True)
+        self.running_mean = init.zeros(dim, device=device, dtype=dtype)
+        self.running_var = init.ones(dim, device=device, dtype=dtype)
 
     def forward(self, x: Tensor) -> Tensor:
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        """ 
+        """
+        if not self.training:
+            # 预测时，直接使用 running_mean 和 running_var 进行归一化
+            mean = self.running_mean.reshape((1, self.dim))
+            variance = self.running_var.reshape((1, self.dim))
 
+            std = ops.sqrt(variance + self.eps)
+            std_broadcasted = std.broadcast_to(x.shape)
+            mean_broadcasted = mean.broadcast_to(x.shape)
 
+            x_hat = (x - mean_broadcasted) / std_broadcasted
+
+            weight_broadcasted = self.weight.broadcast_to(x.shape)
+            bias_broadcasted = self.bias.broadcast_to(x.shape)
+
+            return x_hat * weight_broadcasted + bias_broadcasted
+        else:
+            # 训练时，更新 running_mean 和 running_var，并进行归一化
+            mean_x = ops.mean(x, axes=0, keepdims=True)
+            mean_x_broadcasted = mean_x.broadcast_to(x.shape)
+            
+            # x - mean_x
+            x_minus_mean = x - mean_x_broadcasted
+            
+            # variance_x 形状 (batch_size, 1)
+            variance_x = ops.mean(x_minus_mean ** 2, axes=0, keepdims=True)
+            
+            # std_x 形状 (batch_size, 1)，需要广播
+            std_x = ops.sqrt(variance_x + self.eps)
+            std_x_broadcasted = std_x.broadcast_to(x.shape)
+            
+            # 归一化
+            x_hat = x_minus_mean / std_x_broadcasted
+            
+            # 应用 weight 和 bias
+            weight_broadcasted = self.weight.broadcast_to(x.shape)
+            bias_broadcasted = self.bias.broadcast_to(x.shape)
+
+            # 更新 running_mean 和 running_var
+            # 获取底层 numpy 数组进行计算
+            current_mean_data = mean_x.realize_cached_data().reshape((self.dim,))
+            current_var_data = variance_x.realize_cached_data().reshape((self.dim,))
+            # 更新滑动平均值
+            self.running_mean.data = Tensor((1 - self.momentum) * self.running_mean.realize_cached_data() + \
+                                    self.momentum * current_mean_data)
+            self.running_var.data = Tensor((1 - self.momentum) * self.running_var.realize_cached_data() + \
+                                    self.momentum * current_var_data)
+            
+            return x_hat * weight_broadcasted + bias_broadcasted
 
 class LayerNorm1d(Module):
     def __init__(self, dim: int, eps: float = 1e-5, device: Any | None = None, dtype: str = "float32") -> None:
         super().__init__()
         self.dim = dim
         self.eps = eps
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        # weight 和 bias 初始化为 (1, dim)，方便广播
+        self.weight = Parameter(init.ones(1, dim, device=device, dtype=dtype), requires_grad=True)
+        self.bias = Parameter(init.zeros(1, dim, device=device, dtype=dtype), requires_grad=True)
 
     def forward(self, x: Tensor) -> Tensor:
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        """ 
+        这部分 ai 助力实现 
+        主要问题在于 BroadcastTo 这个操作
+        EWiseAdd, EWiseMul 等操作并没有显式地处理广播。它们期望输入的形状是完全相同的。在 PyTorch 或 TensorFlow 中，这些操作会自动处理广播。但在 needle 的这个阶段，我们需要手动处理。
+        BroadcastTo.gradient 在此处的作用就是在反向传播时“撤销”广播。它通过对相应的维度求和 (summation) 来实现。例如，如果 (1, D) 的 weight 被广播到 (N, D)，那么在反向传播时，从 (N, D) 传回来的梯度需要对 axis=0 (batch 维度) 求和，才能得到 (1, D) 形状的、针对 weight 的正确梯度。
+        """
+        # 原实现
+        # # Op: ops.mean -> Mean
+        # mean_x = ops.mean(x, axes=1, keepdims=True)
+        
+        # # Op: x - mean_x -> EWiseAdd, Negate 
+        # square_diff = (x - mean_x) ** 2
+        
+        # # Op: ops.mean -> Mean
+        # variance_x = ops.mean(square_diff, axes=1, keepdims=True)
+        
+        # # Op: variance_x + self.eps -> AddScalar
+        # # Op: ops.sqrt -> Sqrt 
+        # std_x = ops.sqrt(variance_x + self.eps)
+        
+        # # Op: (x - mean_x) / std_x -> EWiseDiv (以及隐式的 BroadcastTo)
+        # x_hat = (x - mean_x) / std_x
+        
+        # # Op: x_hat * self.weight -> EWiseMul (以及隐式的 BroadcastTo)
+        # # Op: (...) + self.bias -> AddScalar (以及隐式的 BroadcastTo)
+        # return x_hat * self.weight + self.bias
+        
+        # mean_x 形状 (batch_size, 1)，需要广播到 (batch_size, dim)
+        mean_x = ops.mean(x, axes=1, keepdims=True)
+        mean_x_broadcasted = mean_x.broadcast_to(x.shape)
+        
+        # x - mean_x
+        x_minus_mean = x - mean_x_broadcasted
+        
+        # variance_x 形状 (batch_size, 1)
+        variance_x = ops.mean(x_minus_mean ** 2, axes=1, keepdims=True)
+        
+        # std_x 形状 (batch_size, 1)，需要广播
+        std_x = ops.sqrt(variance_x + self.eps)
+        std_x_broadcasted = std_x.broadcast_to(x.shape)
+        
+        # 归一化
+        x_hat = x_minus_mean / std_x_broadcasted
+        
+        # 应用 weight 和 bias
+        weight_broadcasted = self.weight.broadcast_to(x.shape)
+        bias_broadcasted = self.bias.broadcast_to(x.shape)
+        
+        return x_hat * weight_broadcasted + bias_broadcasted
+
+
 
 
 class Dropout(Module):
@@ -164,9 +272,19 @@ class Dropout(Module):
         self.p = p
 
     def forward(self, x: Tensor) -> Tensor:
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        if not self.training:
+            return x
+        
+        keep_prob = 1 - self.p
+        # 随机生成 mask
+        mask_data = (np.random.rand(*x.shape) < keep_prob).astype(x.dtype)
+        # 注意此处将 mask_data 数组包装成一个不需要梯度的 Tensor（叶子节点
+        mask = Tensor(mask_data, device=x.device, dtype=x.dtype, requires_grad=False)
+        if keep_prob > 0 :
+            return x * mask / (1 - self.p)
+        else:
+            return x * 0
+
 
 
 class Residual(Module):
@@ -175,6 +293,4 @@ class Residual(Module):
         self.fn = fn
 
     def forward(self, x: Tensor) -> Tensor:
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        return x + self.fn(x)

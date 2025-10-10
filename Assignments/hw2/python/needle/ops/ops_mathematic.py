@@ -163,6 +163,19 @@ class DivScalar(TensorOp):
 def divide_scalar(a, scalar):
     return DivScalar(scalar)(a)
 
+class Sqrt(TensorOp):
+    def compute(self, a):
+        return array_api.sqrt(a)
+
+    def gradient(self, out_grad, node):
+        """
+        对于sqrt(a)，a的梯度是0.5 * out_grad / sqrt(a)
+        """
+        return (0.5 * out_grad / node,)
+
+def sqrt(a):
+    return Sqrt()(a)
+
 
 class Transpose(TensorOp):
     def __init__(self, axes: Optional[tuple] = None):
@@ -232,10 +245,23 @@ class BroadcastTo(TensorOp):
         - 考虑输入张量形状与目标形状不一致的情况，返回 (0,)
         """
         input_shape = node.inputs[0].shape
-        reduce_axes = tuple(i for i in range(len(self.shape))
-                            if i >= len(input_shape) or input_shape[i] == 1)
-        grad = summation(out_grad, axes=reduce_axes)
+        output_shape = self.shape
+        
+        # 找出需要求和的轴
+        # 如果输出的维度比输入多，那么需要对这些多出来的维度求和
+        shrink_dims = len(output_shape) - len(input_shape)
+        axes = list(range(shrink_dims))
+        # 找出因为 size=1 而被广播的轴
+        for i in range(len(input_shape)):
+          if input_shape[i] == 1 and output_shape[i + shrink_dims] > 1:
+            axes.append(i + shrink_dims)
+        
+        # 执行求和
+        grad = summation(out_grad, axes=tuple(axes))
+        
+        # Reshape 回原始输入形状
         grad = reshape(grad, input_shape)
+        
         return (grad,)
 
 
@@ -371,19 +397,6 @@ class ReLU(TensorOp):
 def relu(a):
     return ReLU()(a)
 
-class EWiseEqual(TensorOp):
-    def compute(self, a: NDArray, b: NDArray):
-        # 返回 float32 的 0. 或 1. 标志，方便后续梯度运算
-        return array_api.equal(a, b).astype(array_api.float32)
-
-    def gradient(self, out_grad, node):
-        # equal 操作不可导，梯度恒为 0
-        return (out_grad * 0, out_grad * 0)
-
-def equal(a, b):
-    return EWiseEqual()(a, b)
-
-
 class Max(TensorOp):
     def __init__(self, axes: Optional[tuple] = None, keepdims=False):
         self.axes = axes
@@ -444,9 +457,6 @@ class Mean(TensorOp):
     def compute(self, a):
         return array_api.mean(a, axis=self.axes, keepdims=self.keepdims)
     def gradient(self, out_grad, node):
-        """
-        平均值的梯度计算，同样需要在计算图内。
-        """
         a = node.inputs[0]
         input_shape = a.shape
         
@@ -460,10 +470,74 @@ class Mean(TensorOp):
             axes = self.axes if isinstance(self.axes, tuple) else (self.axes,)
             for ax in axes:
                 count *= input_shape[ax]
-        # 如果 keepdims=False，恢复维度并广播
-        # 不需要手动 reshape, broadcast_to 内部会处理
+        # 如果 keepdims=False, out_grad 的形状少了维度，需要先恢复
+        if not self.keepdims and self.axes is not None:
+            new_out_grad_shape = list(out_grad.shape)
+            _axes = self.axes if isinstance(self.axes, tuple) else (self.axes,)
+            for ax in sorted(_axes):
+                new_out_grad_shape.insert(ax, 1) # 在被求和的轴上插入维度1
+            out_grad = reshape(out_grad, tuple(new_out_grad_shape))
+        
+        # 广播到原始输入形状
         grad = broadcast_to(out_grad, input_shape)
-        # 梯度均匀分配，使用 DivScalar Op
-        return grad / count
+        # 梯度均匀分配
+        return grad / count # 这里的 / count 也会触发 DivScalar Op
+    
 def mean(a, axes=None, keepdims=False):
     return Mean(axes, keepdims)(a)
+
+class EWiseCompare(TensorOp):
+    """
+    比较操作的基类，用于实现其他比较操作。
+    """
+    def gradient(self, out_grad:Tensor, node:Tensor):
+        # 比较操作不可导，梯度恒为 0
+        return (out_grad * 0, out_grad * 0)
+
+class EWiseLessThan(EWiseCompare):
+    def compute(self, a: NDArray, b: NDArray):
+        # 返回 float32 的 0. 或 1. 标志，方便后续梯度运算
+        return (a > b).astype(array_api.float32)
+    
+def less_than(a, b):
+    return EWiseLessThan()(a, b)
+
+class EWiseLessEqual(EWiseCompare):
+    def compute(self, a: NDArray, b: NDArray):
+        # 返回 float32 的 0. 或 1. 标志，方便后续梯度运算
+        return (a >= b).astype(array_api.float32)
+
+def less_equal(a, b):
+    return EWiseLessEqual()(a, b)
+    
+class EWiseGreaterThan(EWiseCompare):
+    def compute(self, a: NDArray, b: NDArray):
+        # 返回 float32 的 0. 或 1. 标志，方便后续梯度运算
+        return (a < b).astype(array_api.float32)
+
+def greater_than(a, b):
+    return EWiseGreaterThan()(a, b)
+    
+class EWiseGreaterEqual(EWiseCompare):
+    def compute(self, a: NDArray, b: NDArray):
+        # 返回 float32 的 0. 或 1. 标志，方便后续梯度运算
+        return (a <= b).astype(array_api.float32)
+
+def greater_equal(a, b):
+    return EWiseGreaterEqual()(a, b)
+
+class EWiseEqual(EWiseCompare):
+    def compute(self, a: NDArray, b: NDArray):
+        # 返回 float32 的 0. 或 1. 标志，方便后续梯度运算
+        return array_api.equal(a, b).astype(array_api.float32)
+
+def equal(a, b):
+    return EWiseEqual()(a, b)
+
+class EWiseNotEqual(EWiseCompare):
+    def compute(self, a: NDArray, b: NDArray):
+        # 返回 float32 的 0. 或 1. 标志，方便后续梯度运算
+        return array_api.not_equal(a, b).astype(array_api.float32)
+
+def not_equal(a, b):
+    return EWiseNotEqual()(a, b)
