@@ -32,7 +32,9 @@ class SGD(Optimizer):
                 if param not in self.u:
                     self.u[param] = ndl.zeros_like(param.data, requires_grad=False)
 
+                # grad_with_decay 应该直接加到动量项上，而不是乘以 (1 - momentum)
                 self.u[param] = (self.momentum * self.u[param] + (1 - self.momentum) * grad_with_decay).detach()
+
 
                 param.data = (param.data - self.lr * self.u[param]).detach()
 

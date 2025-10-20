@@ -213,59 +213,26 @@ class LayerNorm1d(Module):
         self.bias = Parameter(init.zeros(1, dim, device=device, dtype=dtype), requires_grad=True)
 
     def forward(self, x: Tensor) -> Tensor:
-        """ 
-        这部分 ai 助力实现 
-        主要问题在于 BroadcastTo 这个操作
-        EWiseAdd, EWiseMul 等操作并没有显式地处理广播。它们期望输入的形状是完全相同的。在 PyTorch 或 TensorFlow 中，这些操作会自动处理广播。但在 needle 的这个阶段，我们需要手动处理。
-        BroadcastTo.gradient 在此处的作用就是在反向传播时“撤销”广播。它通过对相应的维度求和 (summation) 来实现。例如，如果 (1, D) 的 weight 被广播到 (N, D)，那么在反向传播时，从 (N, D) 传回来的梯度需要对 axis=0 (batch 维度) 求和，才能得到 (1, D) 形状的、针对 weight 的正确梯度。
-        """
-        # 原实现
-        # # Op: ops.mean -> Mean
-        # mean_x = ops.mean(x, axes=1, keepdims=True)
-        
-        # # Op: x - mean_x -> EWiseAdd, Negate 
-        # square_diff = (x - mean_x) ** 2
-        
-        # # Op: ops.mean -> Mean
-        # variance_x = ops.mean(square_diff, axes=1, keepdims=True)
-        
-        # # Op: variance_x + self.eps -> AddScalar
-        # # Op: ops.sqrt -> Sqrt 
-        # std_x = ops.sqrt(variance_x + self.eps)
-        
-        # # Op: (x - mean_x) / std_x -> EWiseDiv (以及隐式的 BroadcastTo)
-        # x_hat = (x - mean_x) / std_x
-        
-        # # Op: x_hat * self.weight -> EWiseMul (以及隐式的 BroadcastTo)
-        # # Op: (...) + self.bias -> AddScalar (以及隐式的 BroadcastTo)
-        # return x_hat * self.weight + self.bias
-        
-        # mean_x 形状 (batch_size, 1)，需要广播到 (batch_size, dim)
+        # Op: ops.mean -> Mean
         mean_x = ops.mean(x, axes=1, keepdims=True)
-        mean_x_broadcasted = mean_x.broadcast_to(x.shape)
         
-        # x - mean_x
-        x_minus_mean = x - mean_x_broadcasted
+        # Op: x - mean_x -> EWiseAdd, Negate 
+        square_diff = (x - mean_x) ** 2
         
-        # variance_x 形状 (batch_size, 1)
-        variance_x = ops.mean(x_minus_mean ** 2, axes=1, keepdims=True)
+        # Op: ops.mean -> Mean
+        variance_x = ops.mean(square_diff, axes=1, keepdims=True)
         
-        # std_x 形状 (batch_size, 1)，需要广播
+        # Op: variance_x + self.eps -> AddScalar
+        # Op: ops.sqrt -> Sqrt 
         std_x = ops.sqrt(variance_x + self.eps)
-        std_x_broadcasted = std_x.broadcast_to(x.shape)
         
-        # 归一化
-        x_hat = x_minus_mean / std_x_broadcasted
-        
-        # 应用 weight 和 bias
+        # Op: (x - mean_x) / std_x -> EWiseDiv 
+        x_hat = (x - mean_x) / std_x
+
         weight_broadcasted = self.weight.broadcast_to(x.shape)
         bias_broadcasted = self.bias.broadcast_to(x.shape)
-        
         return x_hat * weight_broadcasted + bias_broadcasted
-
-
-
-
+    
 class Dropout(Module):
     def __init__(self, p: float = 0.5) -> None:
         super().__init__()

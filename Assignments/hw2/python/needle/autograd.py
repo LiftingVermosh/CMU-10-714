@@ -390,7 +390,9 @@ class Tensor(Value):
 
     def __eq__(self, other):
         """ a == b """
-        if isinstance(other, (int, float)):
+        if isinstance(other, Tensor):
+            return array_api.array_equal(self.realize_cached_data(), other.realize_cached_data())
+        elif isinstance(other, (int, float)):
             other = Tensor(other, device=self.device, dtype=self.dtype)
         return needle.ops.equal(self, other)
 
@@ -420,7 +422,9 @@ class Tensor(Value):
     
     def __ne__(self, other):
         """ a != b """
-        if isinstance(other, (int, float)):
+        if isinstance(other, Tensor):
+            return not array_api.array_equal(self.realize_cached_data(), other.realize_cached_data())
+        elif isinstance(other, (int, float)):
             other = Tensor(other, device=self.device, dtype=self.dtype)
         return not needle.ops.equal(self, other)
 

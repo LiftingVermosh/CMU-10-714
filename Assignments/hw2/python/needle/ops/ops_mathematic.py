@@ -14,13 +14,50 @@ import numpy
 BACKEND = "np"
 import numpy as array_api
 
+def sum_gradient_for_broadcasting(input_tensor: Tensor, out_grad: Tensor) -> Tensor:
+    """
+    处理广播反向传播的核心辅助函数。
+    
+    当一个 `input_tensor` 在前向传播中被广播以匹配 `output_grad` 的形状时，
+    这个函数通过对 `output_grad` 进行求和，将梯度还原到 `input_tensor` 的原始形状。
+    Args:
+        input_tensor (Tensor): 前向传播时的原始输入张量。
+        output_grad (Tensor): 从计算图中传回的、具有广播后形状的梯度。
+    Returns:
+        Tensor: 一个形状与 `input_tensor` 完全相同的梯度张量。
+    """
+    # 如果形状相同，直接返回
+    if input_tensor.shape == out_grad.shape:
+        return out_grad
+    
+    axes_to_sum = []    
+
+    shrink_dims = len(out_grad.shape) - len(input_tensor.shape)
+    if shrink_dims > 0:
+        axes_to_sum.extend(range(shrink_dims))
+
+    for i, dim in enumerate(input_tensor.shape):
+        if dim == 1 and out_grad.shape[i + shrink_dims] > 1:
+            axes_to_sum.append(i + shrink_dims)
+
+    if axes_to_sum:
+        summed_grad = summation(out_grad, axes=tuple(axes_to_sum))
+    else:
+        summed_grad = out_grad
+
+    return reshape(summed_grad, input_tensor.shape)
+
 class EWiseAdd(TensorOp):
     def compute(self, a: NDArray, b: NDArray):
         return a + b
 
     def gradient(self, out_grad: Tensor, node: Tensor):
-        return out_grad, out_grad
+        # NOTE: SGD DEBUG
+        lhs, rhs = node.inputs
+        grad_a = sum_gradient_for_broadcasting(lhs, out_grad)
+        grad_b = sum_gradient_for_broadcasting(rhs, out_grad)
 
+        return grad_a, grad_b
 
 def add(a, b):
     return EWiseAdd()(a, b)
@@ -47,7 +84,15 @@ class EWiseMul(TensorOp):
 
     def gradient(self, out_grad: Tensor, node: Tensor):
         lhs, rhs = node.inputs
-        return out_grad * rhs, out_grad * lhs
+        # 应用链式法则
+        grad_a_unsummed = out_grad * rhs
+        grad_b_unsummed = out_grad * lhs
+        
+        # 将梯度还原到原始形状
+        grad_a = sum_gradient_for_broadcasting(lhs, grad_a_unsummed)
+        grad_b = sum_gradient_for_broadcasting(rhs, grad_b_unsummed)
+        
+        return grad_a, grad_b
 
 
 def multiply(a, b):
@@ -85,7 +130,15 @@ class EWisePow(TensorOp):
         lhs, rhs = node.inputs
         if (rhs.realize_cached_data() < 0).any():
             raise ValueError("不支持负指数")
-        return out_grad * rhs * array_api.power(lhs, rhs - 1), out_grad *  array_api.power(lhs, rhs) * log(lhs)
+        # 应用链式法则
+        grad_a_unsummed = out_grad * rhs * power(lhs, rhs - 1)
+        grad_b_unsummed = out_grad * power(lhs, rhs) * log(lhs)
+        
+        # 将梯度还原到原始形状
+        grad_a = sum_gradient_for_broadcasting(lhs, grad_a_unsummed)
+        grad_b = sum_gradient_for_broadcasting(rhs, grad_b_unsummed)
+        
+        return grad_a, grad_b
 
 def power(a, b):
     return EWisePow()(a, b)
@@ -131,7 +184,13 @@ class EWiseDiv(TensorOp):
         对于div(a, b)，a的梯度是1/b，b的梯度是-a/b^2
         """
         lhs , rhs = node.inputs
-        return out_grad / rhs, -out_grad * lhs / (rhs ** 2)
+        grad_a_unsummed = out_grad / rhs
+        grad_b_unsummed = -out_grad * lhs / (rhs ** 2)
+
+        grad_a = sum_gradient_for_broadcasting(lhs, grad_a_unsummed)
+        grad_b = sum_gradient_for_broadcasting(rhs, grad_b_unsummed) 
+
+        return grad_a, grad_b
 
 
 def divide(a, b):
@@ -202,7 +261,7 @@ class Transpose(TensorOp):
     def gradient(self, out_grad, node):
         if self.axes is None:
             # 默认批矩阵转置就是自反
-            return (array_api.swapaxes(out_grad, -1, -2),)
+            return (transpose(out_grad),)
         elif len(self.axes) == 2:
             return (transpose(out_grad, self.axes),)
         else:
@@ -497,7 +556,7 @@ class EWiseCompare(TensorOp):
 class EWiseLessThan(EWiseCompare):
     def compute(self, a: NDArray, b: NDArray):
         # 返回 float32 的 0. 或 1. 标志，方便后续梯度运算
-        return (a > b).astype(array_api.float32)
+        return (a < b).astype(array_api.float32)
     
 def less_than(a, b):
     return EWiseLessThan()(a, b)
@@ -505,7 +564,7 @@ def less_than(a, b):
 class EWiseLessEqual(EWiseCompare):
     def compute(self, a: NDArray, b: NDArray):
         # 返回 float32 的 0. 或 1. 标志，方便后续梯度运算
-        return (a >= b).astype(array_api.float32)
+        return (a <= b).astype(array_api.float32)
 
 def less_equal(a, b):
     return EWiseLessEqual()(a, b)
@@ -513,7 +572,7 @@ def less_equal(a, b):
 class EWiseGreaterThan(EWiseCompare):
     def compute(self, a: NDArray, b: NDArray):
         # 返回 float32 的 0. 或 1. 标志，方便后续梯度运算
-        return (a < b).astype(array_api.float32)
+        return (a > b).astype(array_api.float32)
 
 def greater_than(a, b):
     return EWiseGreaterThan()(a, b)
@@ -521,7 +580,7 @@ def greater_than(a, b):
 class EWiseGreaterEqual(EWiseCompare):
     def compute(self, a: NDArray, b: NDArray):
         # 返回 float32 的 0. 或 1. 标志，方便后续梯度运算
-        return (a <= b).astype(array_api.float32)
+        return (a >= b).astype(array_api.float32)
 
 def greater_equal(a, b):
     return EWiseGreaterEqual()(a, b)
