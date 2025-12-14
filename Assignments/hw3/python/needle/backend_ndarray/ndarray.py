@@ -8,6 +8,7 @@ import numpy as np
 from . import ndarray_backend_numpy
 from . import ndarray_backend_cpu  # type: ignore[attr-defined]
 
+import builtins
 
 # math.prod not in Python 3.7
 def prod(x: Iterable[int]) -> int:
@@ -261,9 +262,23 @@ class NDArray:
             NDArray : reshaped array; this will point to thep
         """
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        _old_total_shape = prod(self.shape)
+        _new_total_shape = prod(new_shape) 
+
+        if _old_total_shape != _new_total_shape:
+            raise ValueError("New shape must have the same number of elements as the old shape")
+        elif not self.is_compact():
+            raise ValueError("Matrix must be compact to reshape")
+        else:
+            new_strides = NDArray.compact_strides(new_shape)
+            new_offset = self._offset
+            return NDArray.make(
+                new_shape,
+                strides=new_strides,
+                device=self.device,
+                handle=self._handle,
+                offset=new_offset,
+            )
 
     def permute(self, new_axes: tuple[int, ...]) -> "NDArray":
         """
@@ -286,9 +301,21 @@ class NDArray:
             strides changed).
         """
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        _old_shape = self.shape
+        _new_shape = tuple(self._shape[i] for i in new_axes)
+        
+        if prod(_old_shape) != prod(_new_shape):
+            raise ValueError("New shape must have the same number of elements as the old shape")
+        else:
+            new_strides = tuple(self._strides[i] for i in new_axes)
+            new_offset = self._offset
+            return NDArray.make(
+                _new_shape,
+                strides=new_strides,
+                device=self.device,
+                handle=self._handle,
+                offset=new_offset,
+            )
 
     def broadcast_to(self, new_shape: tuple[int, ...]) -> "NDArray":
         """
@@ -310,9 +337,40 @@ class NDArray:
             point to the same memory as the original array.
         """
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION]
+        old_shape = self.shape
+        old_strides = self.strides
+        
+        # 确保维度数量一致
+        assert len(old_shape) == len(new_shape), "Shape lengths must match"
+
+        new_strides = []
+        
+        for i in range(len(new_shape)):
+            old_dim = old_shape[i]
+            new_dim = new_shape[i]
+
+            if old_dim == new_dim:
+                # 尺寸匹配：保持原有步长
+                new_strides.append(old_strides[i])
+            elif old_dim == 1 and new_dim > 1:
+                # 核心广播情况：源尺寸为 1，目标尺寸更大。设置步长为 0。
+                new_strides.append(0)
+            else:
+                # 非法情况：尺寸不匹配，且源尺寸不为 1
+                raise ValueError(
+                    f"Cannot broadcast array of shape {old_shape} to shape {new_shape}. "
+                    f"Incompatible dimensions at index {i}: {old_dim} vs {new_dim}."
+                )
+                
+        # 使用 NDArray.make 创建新的视图
+        return NDArray.make(
+            new_shape, 
+            strides=tuple(new_strides), 
+            device=self.device, 
+            handle=self._handle, 
+            offset=self._offset
+        )
+
 
     ### Get and set elements
 
@@ -376,10 +434,28 @@ class NDArray:
             ]
         )
         assert len(slices) == self.ndim, "Need indexes equal to number of dimensions"
+        assert all(s.step > 0 for s in slices), "No support for negative steps"
+        assert all(s.stop <= self.shape[i] for i, s in enumerate(slices)), "Slice out of bounds"
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        # 对新视角计算新形状、步长和偏移
+        # 错误实现
+        # new_shape = tuple(s.stop - s.start for s in slices)
+        new_shape = tuple(math.ceil((s.stop - s.start) / s.step) for s in slices)
+        # 错误实现
+        # new_strides = tuple(self.strides[i] for i, s in enumerate(slices))
+        new_strides = tuple(self.strides[i] * s.step for i, s in enumerate(slices))
+        new_offset = self._offset + builtins.sum(
+            s.start * self.strides[i] for i, s in enumerate(slices)
+        )
+
+        # 创建新视图
+        return NDArray.make(
+            new_shape,
+            strides=new_strides,
+            device=self.device,
+            handle=self._handle,
+            offset=new_offset,
+        )
 
     def __setitem__(self, idxs: int | slice | tuple[int | slice, ...], other: Union["NDArray", float]) -> None:
         """Set the values of a view into an array, using the same semantics
