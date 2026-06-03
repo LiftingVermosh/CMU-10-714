@@ -1,7 +1,7 @@
 import math
 import operator
 from functools import reduce
-from typing import Any, Callable, Iterable, Union
+from typing import Any, Callable, Iterable, Optional, Union
 
 import numpy as np
 
@@ -261,9 +261,15 @@ class NDArray:
             NDArray : reshaped array; this will point to thep
         """
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        # Check whether the input is vaild
+        if prod(new_shape) != prod(self._shape):
+            raise ValueError(f'Cannot reshape array of size {self._shape} to {new_shape}')
+        
+        # Update Strides
+        strides = NDArray.compact_strides(new_shape)
+        return NDArray.make(
+            new_shape, strides=strides, device=self.device, handle=self._handle, offset=self._offset
+        )
 
     def permute(self, new_axes: tuple[int, ...]) -> "NDArray":
         """
@@ -286,9 +292,10 @@ class NDArray:
             strides changed).
         """
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        new_shape = tuple(self._shape[i] for i in new_axes)
+        new_stride = tuple(self._strides[i] for i in new_axes)
+
+        return NDArray.make(shape=new_shape, strides=new_stride, device=self.device, handle=self._handle, offset=self._offset)
 
     def broadcast_to(self, new_shape: tuple[int, ...]) -> "NDArray":
         """
@@ -308,12 +315,23 @@ class NDArray:
         Returns:
             NDArray: the new NDArray object with the new broadcast shape; should
             point to the same memory as the original array.
-        """
+        """  
+        cur_shape = (1,) * (len(new_shape) - len(self._shape)) + self._shape
+        cur_strides = (0,) * (len(new_shape) - len(self._shape)) + self._strides
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION]
+        new_strides = []
+        
+        for i in range(0, len(cur_shape)):
+            if (new_shape[i] != cur_shape[i] and cur_shape[i] != 1):
+                raise AssertionError(f"New shape must be the same as the original shape, except for dimensions where the size is 1,Exception: new_shape[{i}] = {new_shape[i]}, self._shape[{i}] = {self._shape[i]}")
+            elif cur_shape[i] == 1:
+                new_strides.append(0)
+            else:
+                new_strides.append(cur_strides[i])
 
+        new_strides = tuple(new_strides)
+
+        return NDArray.make(shape=new_shape, strides=new_strides, device=self.device, handle=self._handle, offset=self._offset)
     ### Get and set elements
 
     def process_slice(self, sl: slice, dim: int) -> slice:
@@ -377,9 +395,34 @@ class NDArray:
         )
         assert len(slices) == self.ndim, "Need indexes equal to number of dimensions"
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        # handle multiple slices
+        shape = []
+        strides = []
+        offset = 0
+        for i, s in enumerate(slices):
+            # Scalar Indexing - 选取特定索引 dim 和 stride 都 drop
+            if isinstance(s, int):
+                assert s >= 0 and s < self.shape[i], "Index out of bounds"
+                offset += s * self.strides[i]
+            # Slice Indexing - 选取对应范围并 保留/更新 维度
+            elif isinstance(s, slice):
+                cur_slice = self.process_slice(s, i)
+                start, stop, step = cur_slice.start, cur_slice.stop, cur_slice.step
+
+                offset += start * self.strides[i]
+
+                new_dim = (stop - start + step - 1) // step
+                shape.append(new_dim)
+
+                new_stride = step * self.strides[i]
+                strides.append(new_stride)
+            else:
+                raise AssertionError("Invalid index type")
+            
+        shape = tuple(shape)
+        strides = tuple(strides)
+
+        return NDArray.make(shape, strides, device=self.device, handle=self._handle, offset=offset)
 
     def __setitem__(self, idxs: int | slice | tuple[int | slice, ...], other: Union["NDArray", float]) -> None:
         """Set the values of a view into an array, using the same semantics
@@ -577,12 +620,12 @@ class NDArray:
             )
         return view, out
 
-    def sum(self, axis: int | tuple[int, ...] | list[int] | None = None, keepdims: bool = False) -> "NDArray":
+    def sum(self, axis: int | tuple[int, ...] | list[int] | None = None, keepdims: bool = False, **kwargs) -> "NDArray":
         view, out = self.reduce_view_out(axis, keepdims=keepdims)
         self.device.reduce_sum(view.compact()._handle, out._handle, view.shape[-1])
         return out
 
-    def max(self, axis: int | tuple[int, ...] | list[int] | None = None, keepdims: bool = False) -> "NDArray":
+    def max(self, axis: int | tuple[int, ...] | list[int] | None = None, keepdims: bool = False, **kwargs) -> "NDArray":
         view, out = self.reduce_view_out(axis, keepdims=keepdims)
         self.device.reduce_max(view.compact()._handle, out._handle, view.shape[-1])
         return out
@@ -592,9 +635,26 @@ class NDArray:
         Flip this ndarray along the specified axes.
         Note: compact() before returning.
         """
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        new_strides = list(self.strides)
+        new_offset = self._offset
+
+        # 指定轴元素变更
+        for axis in axes:
+            # 该轴的最后一个元素
+            new_offset += (self.shape[axis] - 1) * self.strides[axis]
+            # 步长取反
+            new_strides[axis] = -new_strides[axis]
+
+        # 直接 make 绕过 __gititem__
+        temp_view = NDArray.make(
+            shape=self.shape,
+            strides=new_strides,
+            device=self.device,
+            handle=self._handle,
+            offset=new_offset
+        )
+
+        return temp_view.compact()
 
     def pad(self, axes: tuple[tuple[int, int], ...]) -> "NDArray":
         """
@@ -602,9 +662,19 @@ class NDArray:
         which lists for _all_ axes the left and right padding amount, e.g.,
         axes = ( (0, 0), (1, 1), (0, 0)) pads the middle axis with a 0 on the left and right side.
         """
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        new_shape = tuple(
+            self.shape[i] + axes[i][0] + axes[i][1] 
+            for i in range(len(self.shape))
+        )
+        
+        expanded_array = self.device.full(new_shape, 0.0)
+        slices = tuple(
+        slice(axes[i][0], axes[i][0] + self.shape[i]) 
+            for i in range(len(self.shape))
+        )
+        expanded_array[tuple(slices)] = self
+        return  expanded_array
+
 
 def array(a: Any, dtype: str = "float32", device: BackendDevice | None = None) -> NDArray:
     """Convenience methods to match numpy a bit more closely."""
@@ -653,3 +723,20 @@ def sum(a: NDArray, axis: int | tuple[int] | list[int] | None = None, keepdims: 
 
 def flip(a: NDArray, axes: tuple[int, ...]) -> NDArray:
     return a.flip(axes)
+
+
+def divide(a: NDArray, b: Union[NDArray, float]) -> NDArray:
+    return a / b
+def negative(a: NDArray) -> NDArray:
+    return -a
+def matmul(a: NDArray, b: NDArray) -> NDArray:
+    return a @ b
+def transpose(a: NDArray, axes: Optional[tuple] = None) -> NDArray:
+    if axes is None:
+        axes = list(range(a.ndim))
+        axes[-1], axes[-2] = axes[-2], axes[-1]
+    return a.permute(tuple(axes))
+def power(a: NDArray, b: Union[NDArray, float]) -> NDArray:
+    return a ** b
+def ones(shape: tuple, dtype: str = "float32", device: BackendDevice | None = None) -> NDArray:
+    return full(shape, 1.0, dtype=dtype, device=device)

@@ -6,18 +6,48 @@ import math
 import numpy as np
 np.random.seed(0)
 
+class ConvBN(ndl.nn.Module):
+    def __init__(self, in_channels:int, out_channels:int, kernel_size:int, stride:int, device=None, dtype='float32'):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv(
+                in_channels  = in_channels,
+                out_channels = out_channels,
+                kernel_size  = kernel_size,
+                stride       = stride,
+                device       = device,
+                dtype        = dtype
+            ),
+            nn.BatchNorm2d(dim=out_channels, device=device, dtype=dtype),
+            nn.ReLU()
+        )
+    def forward(self, x):
+        return self.net(x)
 
 class ResNet9(ndl.nn.Module):
-    def __init__(self, device=None, dtype="float32"):
+    def __init__(self, in_channel:int=3, out_channels:int=10, device=None, dtype="float32"):
         super().__init__()
-        ### BEGIN YOUR SOLUTION ###
-        raise NotImplementedError() ###
-        ### END YOUR SOLUTION
+        self.net = nn.Sequential(
+            ConvBN(in_channel, 16, 7, 4, device, dtype),
+            ConvBN(16, 32, 3, 2, device, dtype),
+            nn.Residual(nn.Sequential(
+                ConvBN(32, 32, 3, 1, device, dtype),
+                ConvBN(32, 32, 3, 1, device, dtype),
+            )),
+            ConvBN(32, 64, 3, 2, device, dtype),
+            ConvBN(64, 128, 3, 2, device, dtype),
+            nn.Residual(nn.Sequential(
+                ConvBN(128, 128, 3, 1, device, dtype),
+                ConvBN(128, 128, 3, 1, device, dtype),
+            )),
+            nn.Flatten(),
+            nn.Linear(128, 128, device=device, dtype=dtype),
+            nn.ReLU(),
+            nn.Linear(128, out_channels, device=device, dtype=dtype)
+        )
 
     def forward(self, x):
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        return self.net(x)
 
 
 class LanguageModel(nn.Module):

@@ -103,11 +103,7 @@ class Linear(Module):
 
 class Flatten(Module):
     def forward(self, X: Tensor) -> Tensor:
-        batch_size = X.shape[0]
-        feature_size = 1
-        for s in X.shape[1:]:
-            feature_size *= s
-        return X.reshape((batch_size, feature_size))
+        return X.reshape((X.shape[0], -1))
 
 
 class ReLU(Module):
@@ -150,8 +146,8 @@ class BatchNorm1d(Module):
         self.eps = eps
         self.momentum = momentum
         
-        self.running_mean = init.zeros(dim, device=device, dtype=dtype)
-        self.running_var = init.ones(dim, device=device, dtype=dtype)
+        self.running_mean = Parameter(init.zeros(dim, device=device, dtype=dtype))
+        self.running_var = Parameter(init.ones(dim, device=device, dtype=dtype))
         self.weight = Parameter(init.ones(dim, device=device, dtype=dtype))
         self.bias = Parameter(init.zeros(dim, device=device, dtype=dtype))
 
@@ -159,22 +155,25 @@ class BatchNorm1d(Module):
         B = x.shape[0]
         if self.training:
             original_mean = ops.summation(x, axes=(0,)) / B
+            original_var = ops.summation((x - original_mean.reshape((1, -1)).broadcast_to(x.shape)) ** 2, axes=(0,)) / B 
+
+            self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * original_mean.reshape((self.dim,)) # Ensure it stays (dim,)
+            self.running_var = (1 - self.momentum) * self.running_var + self.momentum * original_var.reshape((self.dim,)) # Ensure it stays (dim,)
             
-            original_var = ops.summation((x - original_mean.reshape((1, self.dim)).broadcast_to(x.shape)) ** 2, axes=(0,)) / B 
-            self.running_mean = ((1 - self.momentum) * self.running_mean + self.momentum * original_mean.reshape((self.dim,))).detach()
-            self.running_var = ((1 - self.momentum) * self.running_var + self.momentum * original_var.reshape((self.dim,))).detach()
-            
-            mean_broadcasted = original_mean.reshape((1, self.dim)).broadcast_to(x.shape)
-            var_broadcasted = original_var.reshape((1, self.dim)).broadcast_to(x.shape)
+            mean_broadcasted = original_mean.reshape((1, -1)).broadcast_to(x.shape)
+            var_broadcasted = original_var.reshape((1, -1)).broadcast_to(x.shape)
+
             x_hat = (x - mean_broadcasted) / (var_broadcasted + self.eps) ** 0.5
         else:
-            mean_broadcasted = self.running_mean.reshape((1, self.dim)).broadcast_to(x.shape)
-            var_broadcasted = self.running_var.reshape((1, self.dim)).broadcast_to(x.shape)
-            x_hat = (x - mean_broadcasted) / (var_broadcasted + self.eps) ** 0.5
-        assert x_hat.shape == x.shape, f'Excepted {x.shape}, got {x_hat.shape}'
+            mean_broadcasted = self.running_mean.reshape((1, -1)).broadcast_to(x.shape)
+            var_broadcasted = self.running_var.reshape((1, -1)).broadcast_to(x.shape)
 
-        y = self.weight.reshape((1, self.dim)).broadcast_to(x.shape) * x_hat + self.bias.reshape((1, self.dim)).broadcast_to(x.shape)
+            x_hat = (x - mean_broadcasted) / (var_broadcasted + self.eps) ** 0.5
+
+        assert x_hat.shape == x.shape, f'Excepted {x.shape}, got {x_hat.shape}'
+        y = self.weight.reshape((1, -1)).broadcast_to(x.shape) * x_hat + self.bias.reshape((1, -1)).broadcast_to(x.shape)
         return y
+
 
 class BatchNorm2d(BatchNorm1d):
     def __init__(self, *args, **kwargs):

@@ -5,7 +5,12 @@
 /.pytest_cache/**
 /__pycache__
 /__pycache__/**
+*/data/*
 *.json
+tmp/**
+
+
+# DO NOT IGNORE
 !*.py
 !*.ipynb
 !.gitignore
@@ -16,4 +21,4 @@
 !./Assignment/hw3/**
 !Makefile
 !README.md
-!./Notes/**
+!./Notes/**tmp/

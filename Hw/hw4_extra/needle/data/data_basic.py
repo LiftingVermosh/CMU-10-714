@@ -57,15 +57,48 @@ class DataLoader:
         if not self.shuffle:
             self.ordering = np.array_split(np.arange(len(dataset)), 
                                            range(batch_size, len(dataset), batch_size))
+            
+        self._iterable = None
 
     def __iter__(self):
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        indices = np.arange(len(self.dataset))
+        if self.shuffle:
+            np.random.shuffle(indices)
+        
+        for i in range(0, len(indices), self.batch_size):
+            batch_dict_indices = indices[i : i + self.batch_size]
+            # 获取数据并转换为符合要求的 Tensor 格式
+            batch_samples = [self.dataset[idx] for idx in batch_dict_indices]
+            
+            return_data = []
+            for j in range(len(batch_samples[0])):
+                # 把样本汇聚成大数组
+                data_batch = np.stack([sample[j] for sample in batch_samples])
+                return_data.append(Tensor(data_batch))
+            
+            yield tuple(return_data)
+
+    def __len__(self):
+        return (len(self.dataset) + self.batch_size - 1) // self.batch_size
+
+    def __repr__(self):
+        return f"DataLoader({self.dataset}, batch_size={self.batch_size}, shuffle={self.shuffle})"
+
+    def __str__(self):
+        return f"DataLoader({self.dataset}, batch_size={self.batch_size}, shuffle={self.shuffle})"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
         return self
 
     def __next__(self):
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
-
+        if self._iterable is None:
+            self._iterable = iter(self)
+        
+        try:
+            return next(self._iterable)
+        except StopIteration:
+            self._iterable = None
+            raise StopIteration

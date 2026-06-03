@@ -1,7 +1,7 @@
 """Core data structures."""
 import needle
-from .backend_numpy import Device, cpu, all_devices
-from typing import List, Optional, NamedTuple, Tuple, Union
+from .backend_numpy import Device, all_devices
+from typing import List, Optional, NamedTuple, Tuple, Union, Dict
 from collections import namedtuple
 import numpy
 
@@ -17,7 +17,7 @@ TENSOR_COUNTER = 0
 import numpy as array_api
 NDArray = numpy.ndarray
 
-from .backend_selection import array_api, NDArray, default_device
+from .backend_selection import array_api, NDArray, default_device, cpu
 
 class Op:
     """Operator definition."""
@@ -305,7 +305,7 @@ class Tensor(Value):
     def numpy(self):
         data = self.realize_cached_data()
         if array_api is numpy:
-            return data
+            return numpy.array(data)
         return data.numpy()
 
     def __add__(self, other):
@@ -365,6 +365,7 @@ class Tensor(Value):
     __radd__ = __add__
     __rmul__ = __mul__
 
+
 def compute_gradient_of_variables(output_tensor, out_grad):
     """Take gradient of output node with respect to each node in node_list.
 
@@ -378,11 +379,39 @@ def compute_gradient_of_variables(output_tensor, out_grad):
     node_to_output_grads_list[output_tensor] = [out_grad]
 
     # Traverse graph in reverse topological order given the output_node that we are taking gradient wrt.
+    # 映射表：节点 -> 从输出节点收到的梯度贡献列表
+    node_to_output_grads_list: Dict[Tensor, List[Tensor]] = {}
+    node_to_output_grads_list[output_tensor] = [out_grad]
+
+    # 获取逆拓扑排序
     reverse_topo_order = list(reversed(find_topo_sort([output_tensor])))
 
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+    for node in reverse_topo_order:
+        # 获取当前节点的梯度贡献列表
+        current_grads = node_to_output_grads_list.get(node, [])
+        if not current_grads:
+            # 如果没有梯度贡献，设置为零梯度
+            node.grad = init.zeros_like(node)
+            continue
+        
+        # 计算当前节点的总梯度
+        node_grad = sum_node_list(current_grads)
+        node.grad = node_grad  # 存储当前节点的梯度
+
+        # 如果是叶子节点（无操作），不需要继续传播
+        if node.op is None:
+            continue
+
+        # 计算当前节点对输入节点的梯度
+        input_grads = node.op.gradient_as_tuple(node_grad, node)
+
+        # 将梯度传播到输入节点
+        for i, input_node in enumerate(node.inputs):
+            if input_node not in node_to_output_grads_list:
+                node_to_output_grads_list[input_node] = []
+            node_to_output_grads_list[input_node].append(input_grads[i])
+
+    return node_to_output_grads_list
 
 
 def find_topo_sort(node_list: List[Value]) -> List[Value]:
@@ -393,16 +422,22 @@ def find_topo_sort(node_list: List[Value]) -> List[Value]:
     after all its predecessors are traversed due to post-order DFS, we get a topological
     sort.
     """
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+    visited = set()
+    topo_order = []
+    for node in node_list:
+        if node not in visited:
+            topo_sort_dfs(node, visited, topo_order)
+    return topo_order
 
 
 def topo_sort_dfs(node, visited, topo_order):
     """Post-order DFS"""
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+    input_nodes = node.inputs
+    for input_node in input_nodes:
+        if input_node not in visited:
+            topo_sort_dfs(input_node, visited, topo_order)
+    visited.add(node)
+    topo_order.append(node)
 
 
 ##############################

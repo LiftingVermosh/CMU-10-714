@@ -1,5 +1,5 @@
 import math
-from .init_basic import *
+from .....tmp.python.needle.init.init_basic import *
 from typing import Any
 
 def xavier_uniform(fan_in: int, fan_out: int, gain: float = 1.0, shape = None, **kwargs: Any) -> "Tensor":

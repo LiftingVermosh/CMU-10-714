@@ -2,7 +2,7 @@
 """
 from typing import Any
 from needle.autograd import Tensor
-from needle import ops
+from Hw.hw4_extra.needle import ops
 import needle.init as init
 import numpy as np
 
